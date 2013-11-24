@@ -51,6 +51,10 @@ static long counter_x,       // Counter variables for the bresenham line tracer
             counter_y,
             counter_z,
             counter_e;
+#ifdef COREXY
+static long steps_a,          // magnitude and direction for the A/B motion (used to decide which endstops can be hit)
+            steps_b;
+#endif
 volatile static unsigned long step_events_completed; // The number of step events executed in the current block
 #ifdef ADVANCE
   static long advance_rate, advance, final_advance = 0;
@@ -344,6 +348,9 @@ ISR(TIMER1_COMPA_vect)
           WRITE(X_DIR_PIN, INVERT_X_DIR);
         #endif
         count_direction[X_AXIS]=-1;
+        #ifdef COREXY
+          steps_a = -current_block->steps_x;
+        #endif
       }
       else{
         #ifdef DUAL_X_CARRIAGE
@@ -361,6 +368,9 @@ ISR(TIMER1_COMPA_vect)
           WRITE(X_DIR_PIN, !INVERT_X_DIR);
         #endif
         count_direction[X_AXIS]=1;
+        #ifdef COREXY
+          steps_a = current_block->steps_x;
+        #endif
       }
 
       if((out_bits & (1<<Y_AXIS))!=0){
@@ -371,6 +381,9 @@ ISR(TIMER1_COMPA_vect)
       #endif
 
         count_direction[Y_AXIS]=-1;
+        #ifdef COREXY
+          steps_b = -current_block->steps_y;
+        #endif
       }
       else{
         WRITE(Y_DIR_PIN, !INVERT_Y_DIR);
@@ -380,6 +393,9 @@ ISR(TIMER1_COMPA_vect)
       #endif
 
         count_direction[Y_AXIS]=1;
+        #ifdef COREXY
+          steps_b = current_block->steps_y;
+        #endif
       }
 
       if ((out_bits & (1<<Z_AXIS)) != 0) {   // -direction
@@ -435,7 +451,7 @@ ISR(TIMER1_COMPA_vect)
   #ifndef COREXY
   if ((out_bits & (1<<X_AXIS)) != 0) {   // stepping along -X axis
   #else
-  if ((((out_bits & (1<<X_AXIS)) != 0)&&(out_bits & (1<<Y_AXIS)) != 0)) {   //-X occurs for -A and -B
+  if( steps_a + steps_b < 0 ){           // -X occurs for A + B < 0
   #endif
     CHECK_ENDSTOPS
     {
@@ -482,7 +498,7 @@ ISR(TIMER1_COMPA_vect)
   #ifndef COREXY
   if ((out_bits & (1<<Y_AXIS)) != 0) {   // -direction
   #else
-  if ((((out_bits & (1<<X_AXIS)) != 0)&&(out_bits & (1<<Y_AXIS)) == 0)) {   // -Y occurs for -A and +B
+  if( steps_a - steps_b < 0 ){           // -Y occurs for A - B < 0
   #endif
     CHECK_ENDSTOPS
     {
