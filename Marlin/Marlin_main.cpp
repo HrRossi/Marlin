@@ -74,6 +74,10 @@
 // G28 - Home all Axis
 // G29 - Detailed Z-Probe, probes the bed at 3 points.  You must de at the home position for this to work correctly.
 // G30 - Single Z Probe, probes bed at current XY location.
+//       If a Z coordinate is given, the probe advances to that coordinate and starts the slow approach from there.
+//       Also, in this case the preparatory and cleanup steps (activating servo, etc) are skipped and have to be done
+//       beforehand / afterwards. Responds with Z-coordinate (e.g. "Z0.5") of contact point. This scenario is intended
+//       for topology scanning purposes.
 // G90 - Use Absolute Coordinates
 // G91 - Use Relative Coordinates
 // G92 - Set current position to cordinates given
@@ -879,6 +883,9 @@ static void do_blocking_move_relative(float offset_x, float offset_y, float offs
     do_blocking_move_to(current_position[X_AXIS] + offset_x, current_position[Y_AXIS] + offset_y, current_position[Z_AXIS] + offset_z);
 }
 
+#endif // #ifdef ENABLE_AUTO_BED_LEVELING
+
+#if defined(ENABLE_AUTO_BED_LEVELING) || defined(ENABLE_Z_SCANNING)
 static void setup_for_endstop_move() {
     saved_feedrate = feedrate;
     saved_feedmultiply = feedmultiply;
@@ -929,8 +936,40 @@ static void retract_z_probe() {
     }
     #endif
 }
+#endif // #if defined(ENABLE_AUTO_BED_LEVELING) || defined(ENABLE_Z_SCANNING)
 
-#endif // #ifdef ENABLE_AUTO_BED_LEVELING
+#ifdef ENABLE_Z_SCANNING
+static float run_scan_z_probe(float start_z) {
+  #ifdef ENABLE_AUTO_BED_LEVELING
+    plan_bed_level_matrix.set_to_identity();
+  #endif // #ifdef ENABLE_AUTO_BED_LEVELING
+    feedrate = homing_feedrate[Z_AXIS];
+
+    // move down to the given start point
+    plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], start_z, current_position[E_AXIS], feedrate/60, active_extruder);
+    st_synchronize();
+
+    // move down slowly to find surface
+    feedrate = homing_feedrate[Z_AXIS]/4;
+    float zPosition = -10;
+    plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], zPosition, current_position[E_AXIS], feedrate/60, active_extruder);
+    st_synchronize();
+
+    // we have to let the planner know where we are right now as it is not where we said to go.
+    zPosition = st_get_position_mm(Z_AXIS);
+    plan_set_position(current_position[X_AXIS], current_position[Y_AXIS], zPosition, current_position[E_AXIS]);
+
+    endstops_hit_on_purpose();
+
+    // move up to the given start point
+    feedrate = homing_feedrate[Z_AXIS];
+    current_position[Z_AXIS] = start_z;
+    plan_buffer_line(current_position[X_AXIS], current_position[Y_AXIS], start_z, current_position[E_AXIS], feedrate/60, active_extruder);
+    st_synchronize();
+
+    return zPosition;
+}
+#endif // #ifdef ENABLE_Z_SCANNING
 
 static void homeaxis(int axis) {
 #define HOMEAXIS_DO(LETTER) \
@@ -1337,8 +1376,13 @@ void process_commands()
             plan_set_position(current_position[X_AXIS], current_position[Y_AXIS], current_position[Z_AXIS], current_position[E_AXIS]);
         }
         break;
-        
+#endif // ENABLE_AUTO_BED_LEVELING
+
+#if defined(ENABLE_AUTO_BED_LEVELING) || defined(ENABLE_Z_SCANNING)
     case 30: // G30 Single Z Probe
+      #ifdef ENABLE_Z_SCANNING
+        if( !code_seen(axis_codes[Z_AXIS]) )
+      #endif
         {
             engage_z_probe(); // Engage Z Servo endstop if available
             
@@ -1361,8 +1405,26 @@ void process_commands()
 
             retract_z_probe(); // Retract Z Servo endstop if available
         }
+      #ifdef ENABLE_Z_SCANNING
+        else {
+          setup_for_endstop_move();
+
+          float zPosition = code_value();
+
+          // testing option, uncomment if you want to use parameter 'T' for just having the Z value echoed
+          //if( !code_seen('T') )
+            zPosition = run_scan_z_probe(zPosition);
+
+          SERIAL_PROTOCOLPGM("Z");
+          SERIAL_PROTOCOL(zPosition);
+          SERIAL_PROTOCOLPGM("\n");
+
+          clean_up_after_endstop_move();
+        }
+      #endif // #ifdef ENABLE_Z_SCANNING
         break;
-#endif // ENABLE_AUTO_BED_LEVELING
+#endif // #if defined(ENABLE_AUTO_BED_LEVELING) || defined(ENABLE_Z_SCANNING)
+
     case 90: // G90
       relative_mode = false;
       break;
